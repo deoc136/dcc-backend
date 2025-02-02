@@ -18,10 +18,10 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
   port: process.env.DB_PORT,
 });
-
+app.use(cors());
 
 // Handle preflight requests
-app.options('*', cors());
+//app.options('*', cors());
 
 
 // Middleware to parse JSON bodies
@@ -293,7 +293,8 @@ app.post('/appointment/create', async (req, res) => {
       minute,
       patient_id,
       payment_method,
-      creation_date
+      creation_date,
+      doctor_id
     } = req.body;
 
     const result = await pool.query(`
@@ -309,8 +310,8 @@ app.post('/appointment/create', async (req, res) => {
         hidden,
         from_package,
         creation_date,
-        headquarter_id,
-        therapist_id
+        therapist_id,
+        headquarter_id
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id
     `, [
@@ -325,7 +326,7 @@ app.post('/appointment/create', async (req, res) => {
       false,
       false,
       creation_date,
-      1,
+      doctor_id,
       1
     ]);
 
@@ -471,6 +472,121 @@ app.get('/user/get/:id', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error fetching user by ID:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add this endpoint to server.js
+app.put('/appointment/edit', async (req, res) => {
+  const {
+    id,
+    service_id,
+    price,
+    state,
+    date,
+    hour,
+    minute,
+    patient_id,
+    therapist_id,
+    payment_method,
+    assistance,
+    hidden,
+    from_package,
+    order_id,
+    invoice_id,
+    creation_date
+  } = req.body; // Extract the appointment details from the request body
+
+  try {
+    // Update the appointment in the database
+    const result = await pool.query(`
+      UPDATE public.appointment
+      SET 
+        service_id = $1,
+        price = $2,
+        state = $3,
+        date = $4,
+        hour = $5,
+        minute = $6,
+        patient_id = $7,
+        therapist_id = $8,
+        payment_method = $9,
+        assistance = $10,
+        hidden = $11,
+        from_package = $12,
+        order_id = $13,
+        invoice_id = $14,
+        creation_date = $15
+      WHERE id = $16
+      RETURNING *
+    `, [
+      service_id,
+      price,
+      state,
+      date,
+      hour,
+      minute,
+      patient_id,
+      therapist_id,
+      payment_method,
+      assistance,
+      hidden,
+      from_package,
+      order_id,
+      invoice_id,
+      creation_date,
+      id
+    ]);
+
+    // Check if the appointment was updated
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
+
+    // Return the updated appointment data
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error updating appointment:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add this endpoint to server.js
+app.get('/appointment/get/:id', async (req, res) => {
+  const { id } = req.params; // Extract the appointment ID from the request parameters
+  try {
+    // Query the database for the appointment with the specified ID
+    const result = await pool.query(`
+      SELECT 
+        id, 
+        service_id, 
+        price, 
+        state, 
+        date, 
+        hour, 
+        minute, 
+        patient_id, 
+        therapist_id, 
+        payment_method, 
+        assistance, 
+        hidden, 
+        from_package, 
+        order_id, 
+        invoice_id, 
+        creation_date
+      FROM public.appointment
+      WHERE id = $1
+    `, [id]);
+
+    // Check if an appointment was found
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
+
+    // Return the appointment data
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error fetching appointment by ID:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
