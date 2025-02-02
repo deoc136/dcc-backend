@@ -2,6 +2,7 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const { Pool } = require('pg');
+const cors = require('cors');
 
 // Load environment variables from .env file
 dotenv.config();
@@ -17,6 +18,11 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
   port: process.env.DB_PORT,
 });
+
+
+// Handle preflight requests
+app.options('*', cors());
+
 
 // Middleware to parse JSON bodies
 app.use(express.json());
@@ -86,7 +92,6 @@ app.get('/appointment/getAllWithNames', async (req, res) => {
         service s ON s.id = a.service_id
     `);
 
-    // Format the result into { appointment: {...}, data: {...} }
     const formattedResult = result.rows.map(row => ({
       appointment: {
         id: row.id,
@@ -94,6 +99,7 @@ app.get('/appointment/getAllWithNames', async (req, res) => {
         state: row.state,
         date: row.date,
         hour: row.hour,
+        minute: row.minute,
         price: row.price,
         headquarter_id: row.headquarter_id,
         patient_id: row.patient_id,
@@ -188,8 +194,283 @@ app.get("/package/getAllByServiceId/:id", async (req, res) => {
   }
 });
 
+// Add this endpoint to server.js
+app.get('/user/getAllByRole/:role', async (req, res) => {
+  const { role } = req.params;
+  
+  try {
+    const result = await pool.query(`
+      SELECT 
+        id, 
+        name as names, 
+        last_names, 
+        phone, 
+        address, 
+        email, 
+        enabled, 
+        profile_picture, 
+        cognito_id, 
+        "role_id" as role,
+        identification, 
+        identification_type, 
+        headquarter_id, 
+        retired, 
+        birth_date, 
+        genre, 
+        residence_country, 
+        residence_city, 
+        nationality, 
+        date_created
+      FROM public."user"
+      WHERE role_id = $1
+    `, [role]);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching users by role:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add this endpoint to server.js
+app.get('/userService/getAll', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        id, 
+        user_id, 
+        service_id
+      FROM public.user_service
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching user services:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/appointment/getAll', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        id, 
+        service_id, 
+        state, 
+        date, 
+        hour, 
+        price, 
+        patient_id, 
+        therapist_id, 
+        hidden, 
+        assistance, 
+        payment_method, 
+        from_package, 
+        order_id, 
+        invoice_id,
+        creation_date
+      FROM public.appointment
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching appointments:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add these endpoints to server.js
+
+// Create appointment with existing patient
+app.post('/appointment/create', async (req, res) => {
+  try {
+    const {
+      service_id,
+      price,
+      state,
+      date,
+      hour,
+      minute,
+      patient_id,
+      payment_method,
+      creation_date
+    } = req.body;
+
+    const result = await pool.query(`
+      INSERT INTO public.appointment (
+        service_id,
+        price,
+        state,
+        date,
+        hour,
+        minute,
+        patient_id,
+        payment_method,
+        hidden,
+        from_package,
+        creation_date,
+        headquarter_id,
+        therapist_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING id
+    `, [
+      service_id,
+      price,
+      state,
+      date,
+      hour,
+      minute,
+      patient_id,
+      payment_method,
+      false,
+      false,
+      creation_date,
+      1,
+      1
+    ]);
+
+    res.json({ id: result.rows[0].id });
+  } catch (err) {
+    console.error('Error creating appointment:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create appointment with new patient
+app.post('/appointment/createWithPatient', async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+
+    const { user, appointment } = req.body;
+
+    // First create the new patient without cognito_id
+    const userResult = await client.query(`
+      INSERT INTO public."user" (
+        name,
+        last_names,
+        phone,
+        address,
+        email,
+        enabled,
+        role_id, 
+        profile_picture,
+        date_created
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id
+    `, [  
+      user.names,
+      user.last_names,
+      user.phone,
+      user.address || null,
+      user.email || null,
+      true, // enabled
+      'PATIENT', // role_id
+      "",
+      new Date()
+    ]);
+
+    const patient_id = userResult.rows[0].id;
+
+    // Get random therapist for the service
+
+
+    // Create the appointment
+    const appointmentResult = await client.query(`
+      INSERT INTO public.appointment (
+        service_id,
+        price,
+        state,
+        date,
+        hour,
+        minute,
+        patient_id,
+        payment_method,
+        hidden,
+        from_package,
+        creation_date,
+        headquarter_id,
+        therapist_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING id
+    `, [
+      appointment.service_id,
+      appointment.price,
+      appointment.state,
+      appointment.date,
+      appointment.hour,
+      appointment.minute || 0,
+      patient_id,
+      appointment.payment_method,
+      false,
+      false,
+      appointment.creation_date,
+      1,
+      1
+    ]);
+
+    await client.query('COMMIT');
+    res.json({ id: appointmentResult.rows[0].id });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error creating appointment with patient:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+
+//Get any user by ID
 
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
+});
+
+// Add this endpoint to server.js
+app.get('/user/get/:id', async (req, res) => {
+  const { id } = req.params; // Extract the user ID from the request parameters
+
+  try {
+    // Query the database for the user with the specified ID
+    const result = await pool.query(`
+      SELECT 
+        id, 
+        name as names, 
+        last_names, 
+        phone, 
+        address, 
+        email, 
+        enabled, 
+        profile_picture, 
+        cognito_id, 
+        "role_id" as role,
+        identification, 
+        identification_type, 
+        headquarter_id, 
+        retired, 
+        birth_date, 
+        genre, 
+        residence_country, 
+        residence_city, 
+        nationality, 
+        date_created
+      FROM public."user"
+      WHERE id = $1
+    `, [id]);
+
+    // Check if a user was found
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Return the user data
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error fetching user by ID:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
